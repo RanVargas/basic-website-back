@@ -21,14 +21,14 @@ func isDBConnectionAlive() (*sql.DB, bool) {
 	return db, true
 }
 
-func SaveUser(user *Types.User) bool {
+func SaveUser(user Types.User) bool {
 	db, dbIsAlive := isDBConnectionAlive()
 	if dbIsAlive == false {
 		panic("DB connection failed")
 	}
 	defer db.Close()
 
-	insert, err := db.Query(fmt.Sprintf("INSERT INTO users VALUES (%s, %s, %s)", user.Name, user.Email, user.Phone))
+	insert, err := db.Query(fmt.Sprintf("INSERT INTO users (UUID, NAME, EMAIL, PHONE, PASSWORD, IS_GOOGLE_AUTHENTICATED) VALUES ('%s', '%s', '%s', '%s', '%s', '%s')", user.UUID, user.Name, user.Email, user.Phone, user.Password, user.IsGoogleAuthenticated))
 	if err != nil {
 		panic(err.Error())
 		return false
@@ -37,7 +37,43 @@ func SaveUser(user *Types.User) bool {
 	return true
 }
 
-func GetUser(email string) Types.User {
+func GetUserByUUID(uniqueId string) *Types.User {
+	db, dbIsAlive := isDBConnectionAlive()
+	if dbIsAlive == false {
+		panic("DB connection failed")
+	}
+	defer db.Close()
+
+	results, err := db.Query(fmt.Sprintf("SELECT * FROM users WHERE UUID = '%s'", uniqueId))
+	if err != nil {
+		fmt.Println(err)
+		panic("Query to DB failed")
+	}
+	var user Types.User
+	i := 0
+	for results.Next() {
+		i++
+		var id, uuid, name, email, phone, password, isGoogleAuthenticated string
+		err = results.Scan(&id, &uuid, &name, &email, &phone, &password, &isGoogleAuthenticated)
+		if err != nil {
+			panic("failed to query")
+		}
+		user = Types.User{
+			UUID:                  uuid,
+			Name:                  name,
+			Phone:                 phone,
+			Email:                 email,
+			Password:              password,
+			IsGoogleAuthenticated: isGoogleAuthenticated,
+		}
+	}
+	if i == 0 {
+		return nil
+	}
+	return &user
+}
+
+func GetUserById(email string) Types.User {
 	db, dbIsAlive := isDBConnectionAlive()
 	if dbIsAlive == false {
 		panic("DB connection failed")
@@ -51,20 +87,21 @@ func GetUser(email string) Types.User {
 	}
 	var user Types.User
 	for results.Next() {
-		var id string
-		var name string
-		var email, phone string
-		err = results.Scan(&id, &name, &email, &phone)
+		var id, uuid, name, email, phone, password, isGoogleAuthenticated string
+		err = results.Scan(&id, &uuid, &name, &email, &phone, &password, &isGoogleAuthenticated)
 		if err != nil {
 			panic("failed to query")
 		}
 		user = Types.User{
-			Name:  name,
-			Phone: phone,
-			Email: email,
+			UUID:                  uuid,
+			Name:                  name,
+			Phone:                 phone,
+			Email:                 email,
+			Password:              password,
+			IsGoogleAuthenticated: isGoogleAuthenticated,
 		}
-
 	}
+
 	return user
 }
 
