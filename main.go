@@ -62,7 +62,31 @@ func handleProfileCompletion(writer http.ResponseWriter, request *http.Request) 
 		http.Error(writer, "Method Not Supported", http.StatusMethodNotAllowed)
 		return
 	}
-	//session, _ :=
+	uuidCookie, _ := request.Cookie("uuidCookie")
+	if uuidCookie == nil {
+		http.Error(writer, "Not authenticated", http.StatusForbidden)
+		return
+	}
+	session, _ := cookieStore.Get(request, "session.id")
+	if session != nil && session.Values["authenthicated"] == true {
+		var resultUser Types.User
+		password := request.Form.Get("password")
+		name := request.Form.Get("name")
+		phone := request.Form.Get("phone")
+		userInDb := Database.GetUserByUUID(uuidCookie.Value)
+		if password != "" && password != userInDb.Password {
+			resultUser.Password = password
+		}
+		if name != "" && name != userInDb.Name {
+			resultUser.Name = name
+		}
+		if phone != "" && phone != userInDb.Phone {
+			resultUser.Phone = phone
+		}
+		json.NewEncoder(writer).Encode(resultUser)
+		http.Redirect(writer, request, "/", http.StatusTemporaryRedirect)
+
+	}
 
 }
 
@@ -94,7 +118,7 @@ func handleVanillaSignUp(writer http.ResponseWriter, request *http.Request) {
 	}
 	Database.SaveUser(userToSave)
 	generateSpecialCookie("uuidCookie", userToSave.UUID, writer)
-	http.Redirect(writer, request, "/", http.StatusTemporaryRedirect)
+	http.Redirect(writer, request, "/completeprofile", http.StatusTemporaryRedirect)
 }
 
 func handleVanillaLogin(writer http.ResponseWriter, request *http.Request) {
