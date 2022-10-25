@@ -50,7 +50,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Handler:      r,
-		Addr:         "127.0.0.1:5000",
+		Addr:         fmt.Sprintf(os.Getenv("BASE_URL") + os.Getenv("PORT")),
 		WriteTimeout: 15 * time.Second,
 	}
 	log.Fatal(httpServer.ListenAndServe())
