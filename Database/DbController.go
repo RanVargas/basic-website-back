@@ -21,6 +21,27 @@ func isDBConnectionAlive() (*sql.DB, bool) {
 	return db, true
 }
 
+func UpdateUser(user Types.User) bool {
+	db, dbIsAlive := isDBConnectionAlive()
+	if dbIsAlive == false {
+		panic("DB connection failed")
+	}
+	defer db.Close()
+
+	insertStmnt, err := db.Prepare("UPDATE users SET EMAIL=?, NAME=?, PHONE=?, PASSWORD=? WHERE UUID=?")
+	if err != nil {
+		fmt.Errorf("An error updating the record on DB has ocurred ", err.Error())
+		return false
+	}
+	_, err = insertStmnt.Exec(user.Email, user.Name, user.Phone, user.Password, user.UUID)
+
+	if err != nil {
+		fmt.Errorf("An error updating the record on DB has ocurred ", err.Error())
+		return false
+	}
+	return true
+}
+
 func SaveUser(user Types.User) bool {
 	db, dbIsAlive := isDBConnectionAlive()
 	if dbIsAlive == false {
@@ -34,6 +55,28 @@ func SaveUser(user Types.User) bool {
 		return false
 	}
 	defer insert.Close()
+	return true
+}
+
+func DoesUserExists(email string) bool {
+	db, dbIsAlive := isDBConnectionAlive()
+	if dbIsAlive == false {
+		panic("DB connection failed")
+	}
+	defer db.Close()
+	results, err := db.Query(fmt.Sprintf("SELECT * FROM users WHERE email = '%s'", email))
+	if err != nil {
+		fmt.Println(err)
+		panic("Query to DB failed")
+	}
+	i := 0
+	for results.Next() {
+		i++
+	}
+	defer results.Close()
+	if i == 0 {
+		return false
+	}
 	return true
 }
 
@@ -67,6 +110,7 @@ func GetUserByUUID(uniqueId string) *Types.User {
 			IsGoogleAuthenticated: isGoogleAuthenticated,
 		}
 	}
+	defer results.Close()
 	if i == 0 {
 		return nil
 	}
@@ -103,26 +147,4 @@ func GetUserById(email string) Types.User {
 	}
 
 	return user
-}
-
-func Dummy() {
-	db, dbIsAlive := isDBConnectionAlive()
-	if dbIsAlive != true {
-		panic("No conecto")
-	}
-	defer db.Close()
-	results, err := db.Query("SELECT * FROM users")
-	if err != nil {
-		panic("Query to DB failed")
-	}
-	for results.Next() {
-		var name string
-		var id string
-		var email, phone string
-		err = results.Scan(&id, &name, &email, &phone)
-		if err != nil {
-			panic("failed to query")
-		}
-		fmt.Println(fmt.Sprintf("The data is: %s, %s, %s, %s", id, name, email, phone))
-	}
 }

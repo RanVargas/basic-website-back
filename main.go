@@ -44,9 +44,8 @@ func main() {
 	r.HandleFunc("/completeprofile", handleProfileCompletion).Methods("POST")
 	r.HandleFunc("/healthcheck", healthcheck).Methods("GET")
 	r.HandleFunc("/login", handleVanillaLogin).Methods("POST")
-	r.HandleFunc("/signup", handleVanillaSignUp)
+	r.HandleFunc("/signup", handleVanillaSignUp).Methods("POST")
 	r.HandleFunc("/logout", handleLogout)
-
 	r.HandleFunc("/", handleRoot)
 
 	httpServer := &http.Server{
@@ -70,12 +69,19 @@ func handleProfileCompletion(writer http.ResponseWriter, request *http.Request) 
 	session, _ := cookieStore.Get(request, "session.id")
 	if session != nil && session.Values["authenthicated"] == true {
 		var resultUser Types.User
-		password := request.Form.Get("password")
-		name := request.Form.Get("name")
-		phone := request.Form.Get("phone")
+		password := request.FormValue("password")
+		name := request.FormValue("name")
+		phone := request.FormValue("phone")
+		email := request.FormValue("email")
 		userInDb := Database.GetUserByUUID(uuidCookie.Value)
 		if password != "" && password != userInDb.Password {
 			resultUser.Password = password
+		}
+		if email != "" && email != userInDb.Email {
+			doesEmailExists := Database.DoesUserExists(email)
+			if !doesEmailExists {
+				resultUser.Email = email
+			}
 		}
 		if name != "" && name != userInDb.Name {
 			resultUser.Name = name
@@ -83,8 +89,8 @@ func handleProfileCompletion(writer http.ResponseWriter, request *http.Request) 
 		if phone != "" && phone != userInDb.Phone {
 			resultUser.Phone = phone
 		}
+		Database.UpdateUser(*userInDb)
 		json.NewEncoder(writer).Encode(resultUser)
-		http.Redirect(writer, request, "/", http.StatusTemporaryRedirect)
 
 	}
 
@@ -94,10 +100,11 @@ func healthcheck(writer http.ResponseWriter, request *http.Request) {
 	session, _ := cookieStore.Get(request, "session.id")
 	authenticated := session.Values["authenticated"]
 	if authenticated != nil && authenticated != false {
-		writer.Write([]byte("Welcome!"))
+		json.NewEncoder(writer).Encode(true)
 		return
 	} else {
 		http.Error(writer, "Forbidden", http.StatusForbidden)
+		json.NewEncoder(writer).Encode(false)
 		return
 	}
 }
@@ -107,9 +114,25 @@ func handleVanillaSignUp(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "Method Not Supported", http.StatusMethodNotAllowed)
 		return
 	}
-	email := request.Form.Get("email")
-	password := request.Form.Get("password")
 
+	err := request.ParseForm()
+	if err != nil {
+		http.Error(writer, "Try again", http.StatusInternalServerError)
+	}
+	email := request.FormValue("email")
+	password := request.FormValue("password")
+
+	if email == "" || password == "" {
+		http.Error(writer, "Please try again", http.StatusBadRequest)
+		return
+	}
+	userRegistered := Database.DoesUserExists(email)
+	if userRegistered {
+		log.Printf("User has already registered")
+		http.Error(writer, "You already have an account", http.StatusBadRequest)
+		http.Redirect(writer, request, "/login", http.StatusTemporaryRedirect)
+		return
+	}
 	userToSave := Types.User{
 		UUID:                  uuid.New().String(),
 		Email:                 email,
@@ -117,8 +140,11 @@ func handleVanillaSignUp(writer http.ResponseWriter, request *http.Request) {
 		IsGoogleAuthenticated: "NO",
 	}
 	Database.SaveUser(userToSave)
+	session, _ := cookieStore.Get(request, "session.id")
+	session.Values["authenticated"] = true
+	session.Options.HttpOnly = true
+	session.Save(request, writer)
 	generateSpecialCookie("uuidCookie", userToSave.UUID, writer)
-	http.Redirect(writer, request, "/completeprofile", http.StatusTemporaryRedirect)
 }
 
 func handleVanillaLogin(writer http.ResponseWriter, request *http.Request) {
@@ -133,8 +159,8 @@ func handleVanillaLogin(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	email := request.Form.Get("email")
-	password := request.Form.Get("password")
+	email := request.FormValue("email")
+	password := request.FormValue("password")
 	user := Database.GetUserById(email)
 	if user.Email == "" {
 		http.Error(writer, "You have not signed up yet", http.StatusUnauthorized)
@@ -144,8 +170,8 @@ func handleVanillaLogin(writer http.ResponseWriter, request *http.Request) {
 				session, _ := cookieStore.Get(request, "session.id")
 				session.Values["authenticated"] = true
 				generateSpecialCookie("uuidCookie", user.UUID, writer)
+				session.Options.HttpOnly = true
 				session.Save(request, writer)
-				http.Redirect(writer, request, "/", http.StatusTemporaryRedirect)
 			} else {
 				http.Error(writer, "Invalud Credentials", http.StatusUnauthorized)
 			}
@@ -159,8 +185,7 @@ func handleVanillaLogin(writer http.ResponseWriter, request *http.Request) {
 func handleRoot(writer http.ResponseWriter, request *http.Request) {
 	//TODO return the profile with data
 	cookieInMemory, err := request.Cookie("uuidCookie")
-	fmt.Println("The cookie selected is: ", cookieInMemory, " The error is ", err)
-	if cookieInMemory == nil || cookieInMemory.Value == "" {
+	if (cookieInMemory == nil || cookieInMemory.Value == "") && err != nil {
 		http.Error(writer, "You have not logged in yet", http.StatusUnauthorized)
 		return
 	}
@@ -176,8 +201,14 @@ func handleLogout(writer http.ResponseWriter, request *http.Request) {
 	session, _ := cookieStore.Get(request, "session.id")
 	session.Values["authenticated"] = false
 	session.Save(request, writer)
+
+	uuidCookie, _ := request.Cookie("uuidCookie")
+	if uuidCookie == nil {
+		writer.Write([]byte("You are not logged in"))
+		return
+	}
+	uuidCookie.Value = ""
 	writer.Write([]byte("Logout Successful"))
-	//TODO kill session once logged out
 }
 
 func handleGoogleCallback(writer http.ResponseWriter, request *http.Request) {
@@ -199,23 +230,28 @@ func handleGoogleCallback(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		log.Printf(err.Error())
 	}
-	userInDb := Database.GetUserById(user.Email)
-	if userInDb.Email == "" {
-		userInDb = Types.User{
+
+	userExistance := Database.DoesUserExists(user.Email)
+	if !userExistance {
+		userInDb := Types.User{
 			UUID:                  uuid.New().String(),
 			Email:                 user.Email,
 			IsGoogleAuthenticated: "YES",
 		}
 		generateSpecialCookie("uuidCookie", userInDb.UUID, writer)
-		someCookie, _ := request.Cookie("uuidCookie")
-		fmt.Println("My cookie exists", someCookie)
 		Database.SaveUser(userInDb)
+		json.NewEncoder(writer).Encode(userInDb)
+	} else {
+		tempUser := Database.GetUserById(user.Email)
+		tempUser.Password = ""
+		generateSpecialCookie("uuidCookie", tempUser.UUID, writer)
+		json.NewEncoder(writer).Encode(tempUser)
 	}
-	if userInDb.Email != "" {
-		generateSpecialCookie("uuidCookie", userInDb.UUID, writer)
 
-	}
-	http.Redirect(writer, request, "/", http.StatusTemporaryRedirect)
+	session, _ := cookieStore.Get(request, "session.id")
+	session.Options.HttpOnly = true
+	session.Values["authenticated"] = true
+	session.Save(request, writer)
 }
 
 func getUserDataFromGoogle(code string, writer http.ResponseWriter, request *http.Request) ([]byte, error) {
@@ -250,6 +286,7 @@ func generateStateOauthCookie(writer http.ResponseWriter) {
 		Name:     "oauthstate",
 		Value:    oauthStateString,
 		Expires:  expiration,
+		Path:     "/",
 		HttpOnly: true,
 	}
 	http.SetCookie(writer, &cookie)
